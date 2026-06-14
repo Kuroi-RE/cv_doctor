@@ -1,6 +1,7 @@
 import OpenAI from "openai";
 import { GoogleGenerativeAI } from "@google/generative-ai";
 import type { AiAnalysisOutput } from "@/types";
+import { getDbAiKeys } from "@/lib/admin/keys";
 
 /* =============================================================
  *  Shared system prompt
@@ -99,14 +100,15 @@ function sleep(ms: number): Promise<void> {
  * ============================================================= */
 async function analyzeWithOpenAI(
   parsedText: string,
-  model: string
+  model: string,
+  apiKey?: string
 ): Promise<AiAnalysisOutput> {
-  const apiKey = process.env.OPENAI_API_KEY;
-  if (!apiKey) {
+  const key = apiKey || process.env.OPENAI_API_KEY;
+  if (!key) {
     throw new Error("OPENAI_API_KEY not configured");
   }
 
-  const client = new OpenAI({ apiKey, timeout: 30_000 });
+  const client = new OpenAI({ apiKey: key, timeout: 30_000 });
   const userPrompt = `Please analyze the following CV text:\n\n---\n${parsedText}\n---`;
 
   const MAX_RETRIES = 2;
@@ -141,32 +143,22 @@ async function analyzeWithOpenAI(
         const status = error.status;
         const code = error.code || "";
 
-        // Auth / forbidden / model not found → fail immediately
         if (status === 401 || status === 403 || status === 404) {
-          throw new Error(
-            `OpenAI ${status}: ${code || error.message}`
-          );
+          throw new Error(`OpenAI ${status}: ${code || error.message}`);
         }
-
-        // Rate limit → retry once then bail
         if (status === 429) {
           if (attempt < MAX_RETRIES) {
             await sleep(BASE_DELAY_MS * 2);
             continue;
           }
-          throw new Error(
-            `OpenAI rate limit (429). ${error.message}`
-          );
+          throw new Error(`OpenAI rate limit (429). ${error.message}`);
         }
-
-        // Server errors (5xx) → retry with backoff
         if (status && status >= 500 && attempt < MAX_RETRIES) {
           await sleep(BASE_DELAY_MS * Math.pow(2, attempt - 1));
           continue;
         }
       }
 
-      // Network / timeout → retry with backoff
       const msg = lastError.message.toLowerCase();
       if (
         (msg.includes("network") ||
@@ -191,14 +183,15 @@ async function analyzeWithOpenAI(
  * ============================================================= */
 async function analyzeWithGemini(
   parsedText: string,
-  model: string
+  model: string,
+  apiKey?: string
 ): Promise<AiAnalysisOutput> {
-  const apiKey = process.env.GEMINI_API_KEY;
-  if (!apiKey) {
+  const key = apiKey || process.env.GEMINI_API_KEY;
+  if (!key) {
     throw new Error("GEMINI_API_KEY not configured");
   }
 
-  const genAI = new GoogleGenerativeAI(apiKey);
+  const genAI = new GoogleGenerativeAI(key);
   const genModel = genAI.getGenerativeModel({
     model,
     systemInstruction: SYSTEM_PROMPT,
@@ -215,7 +208,12 @@ async function analyzeWithGemini(
     try {
       const timeoutPromise = new Promise<never>((_, reject) =>
         setTimeout(
-          () => reject(new Error(`Gemini request timed out after ${GEMINI_TIMEOUT_MS}ms`)),
+          () =>
+            reject(
+              new Error(
+                `Gemini request timed out after ${GEMINI_TIMEOUT_MS}ms`
+              )
+            ),
           GEMINI_TIMEOUT_MS
         )
       );
@@ -232,7 +230,6 @@ async function analyzeWithGemini(
       const msg = lastError.message;
       const msgLower = msg.toLowerCase();
 
-      // Auth / quota / bad API key → fail immediately
       if (
         msgLower.includes("401") ||
         msgLower.includes("403") ||
@@ -241,13 +238,9 @@ async function analyzeWithGemini(
       ) {
         throw new Error(`Gemini auth error: ${msg}`);
       }
-
-      // Quota exceeded → fail immediately
       if (msgLower.includes("quota exceeded")) {
         throw new Error(`Gemini quota exceeded: ${msg}`);
       }
-
-      // Rate limit → retry once
       if (msgLower.includes("429") || msgLower.includes("too many requests")) {
         if (attempt < MAX_RETRIES) {
           await sleep(BASE_DELAY_MS * 2);
@@ -255,8 +248,6 @@ async function analyzeWithGemini(
         }
         throw new Error(`Gemini rate limit: ${msg}`);
       }
-
-      // Server / network errors → retry with backoff
       if (
         (msgLower.includes("500") ||
           msgLower.includes("502") ||
@@ -283,17 +274,18 @@ async function analyzeWithGemini(
  * ============================================================= */
 async function analyzeWithNvidia(
   parsedText: string,
-  model: string
+  model: string,
+  apiKey?: string,
+  baseUrl?: string | null
 ): Promise<AiAnalysisOutput> {
-  const apiKey = process.env.NVIDIA_API_KEY;
-  if (!apiKey) {
+  const key = apiKey || process.env.NVIDIA_API_KEY;
+  if (!key) {
     throw new Error("NVIDIA_API_KEY not configured");
   }
 
   const client = new OpenAI({
-    apiKey,
-    baseURL:
-      process.env.NVIDIA_BASE_URL || "https://integrate.api.nvidia.com/v1",
+    apiKey: key,
+    baseURL: baseUrl || process.env.NVIDIA_BASE_URL || "https://integrate.api.nvidia.com/v1",
   });
 
   const userPrompt = `Please analyze the following CV text:\n\n---\n${parsedText}\n---`;
@@ -314,8 +306,6 @@ async function analyzeWithNvidia(
         temperature: 0.3,
         top_p: 0.95,
         max_tokens: 4096,
-        // NVIDIA NIM does not necessarily support response_format: { type: "json_object" }
-        // We rely on the system prompt + cleanJson() instead for compatibility.
       });
 
       const content = completion.choices[0]?.message?.content?.trim();
@@ -329,7 +319,6 @@ async function analyzeWithNvidia(
       lastError = error instanceof Error ? error : new Error(String(error));
       const msg = lastError.message.toLowerCase();
 
-      // Auth / forbidden → fail immediately
       if (
         msg.includes("401") ||
         msg.includes("403") ||
@@ -338,13 +327,9 @@ async function analyzeWithNvidia(
       ) {
         throw new Error(`NVIDIA auth error: ${lastError.message}`);
       }
-
-      // Quota exceeded → fail immediately
       if (msg.includes("quota exceeded")) {
         throw new Error(`NVIDIA quota exceeded: ${lastError.message}`);
       }
-
-      // Rate limit → retry once
       if (msg.includes("429") || msg.includes("rate limit")) {
         if (attempt < MAX_RETRIES) {
           await sleep(BASE_DELAY_MS * 2);
@@ -352,8 +337,6 @@ async function analyzeWithNvidia(
         }
         throw new Error(`NVIDIA rate limit: ${lastError.message}`);
       }
-
-      // Server / network errors → retry with backoff
       if (
         (msg.includes("500") ||
           msg.includes("502") ||
@@ -383,62 +366,81 @@ interface ProviderSpec {
   try: () => Promise<AiAnalysisOutput>;
 }
 
+export type AiAnalysisResult = {
+  result: AiAnalysisOutput;
+  provider: string;
+};
+
 export async function analyzeCvWithAi(
   parsedText: string
-): Promise<AiAnalysisOutput> {
+): Promise<AiAnalysisResult> {
+  // 1. Try database keys first (managed by superadmin)
+  let dbKeys: Awaited<ReturnType<typeof getDbAiKeys>> = null;
+  try {
+    dbKeys = await getDbAiKeys();
+    if (dbKeys) {
+      console.log("[AI] Using API keys from database");
+    }
+  } catch (dbErr) {
+    console.warn("[AI] Failed to fetch keys from DB:", dbErr);
+  }
+
+  // 2. Resolve keys: DB first, then .env fallback
+  const openaiKey = dbKeys?.openai?.key || process.env.OPENAI_API_KEY;
+  const openaiModel =
+    dbKeys?.openai?.model || process.env.OPENAI_MODEL || "gpt-4o-mini";
+  const openaiFallbackModel =
+    process.env.OPENAI_FALLBACK_MODEL || "gpt-4o";
+
+  const geminiKey = dbKeys?.gemini?.key || process.env.GEMINI_API_KEY;
+  const geminiModel =
+    dbKeys?.gemini?.model || process.env.GEMINI_MODEL || "gemini-2.0-flash";
+
+  const nvidiaKey = dbKeys?.nvidia?.key || process.env.NVIDIA_API_KEY;
+  const nvidiaModel =
+    dbKeys?.nvidia?.model ||
+    process.env.NVIDIA_MODEL ||
+    "nvidia/nemotron-3-ultra-550b-a55b";
+  const nvidiaBaseUrl =
+    dbKeys?.nvidia?.baseUrl || process.env.NVIDIA_BASE_URL || null;
+
   const providers: ProviderSpec[] = [];
 
   // 1. Primary: OpenAI
-  if (process.env.OPENAI_API_KEY) {
+  if (openaiKey) {
     providers.push({
       name: "OpenAI",
-      try: () =>
-        analyzeWithOpenAI(
-          parsedText,
-          process.env.OPENAI_MODEL || "gpt-4o-mini"
-        ),
+      try: () => analyzeWithOpenAI(parsedText, openaiModel, openaiKey),
     });
   }
 
   // 2. Fallback 1: Gemini
-  if (process.env.GEMINI_API_KEY) {
+  if (geminiKey) {
     providers.push({
       name: "Gemini",
-      try: () =>
-        analyzeWithGemini(
-          parsedText,
-          process.env.GEMINI_MODEL || "gemini-2.0-flash"
-        ),
+      try: () => analyzeWithGemini(parsedText, geminiModel, geminiKey),
     });
   }
 
   // 3. Fallback 2: NVIDIA NIM
-  if (process.env.NVIDIA_API_KEY) {
+  if (nvidiaKey) {
     providers.push({
       name: "NVIDIA NIM",
-      try: () =>
-        analyzeWithNvidia(
-          parsedText,
-          process.env.NVIDIA_MODEL || "nvidia/nemotron-3-ultra-550b-a55b"
-        ),
+      try: () => analyzeWithNvidia(parsedText, nvidiaModel, nvidiaKey, nvidiaBaseUrl),
     });
   }
 
   // 4. Fallback 3: OpenAI with different model
-  if (process.env.OPENAI_API_KEY) {
+  if (openaiKey) {
     providers.push({
       name: "OpenAI (fallback model)",
-      try: () =>
-        analyzeWithOpenAI(
-          parsedText,
-          process.env.OPENAI_FALLBACK_MODEL || "gpt-4o"
-        ),
+      try: () => analyzeWithOpenAI(parsedText, openaiFallbackModel, openaiKey),
     });
   }
 
   if (providers.length === 0) {
     throw new Error(
-      "No AI providers are configured. Please set OPENAI_API_KEY, GEMINI_API_KEY, or NVIDIA_API_KEY in .env.local"
+      "No AI providers are configured. Please set API keys in the admin panel or in .env.local"
     );
   }
 
@@ -449,16 +451,13 @@ export async function analyzeCvWithAi(
       console.log(`[AI] Trying provider: ${provider.name}`);
       const result = await provider.try();
       console.log(`[AI] Success with provider: ${provider.name}`);
-      return result;
+      return { result, provider: provider.name };
     } catch (error) {
-      const friendly =
-        error instanceof Error ? error.message : String(error);
+      const friendly = error instanceof Error ? error.message : String(error);
       console.error(`[AI Fallback] ${provider.name} failed:`, friendly);
       errors.push(`${provider.name}: ${friendly}`);
     }
   }
 
-  throw new Error(
-    `All AI providers failed. ${errors.join(" | ")}`
-  );
+  throw new Error(`All AI providers failed. ${errors.join(" | ")}`);
 }

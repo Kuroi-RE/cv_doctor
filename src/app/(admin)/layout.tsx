@@ -23,8 +23,8 @@ export default async function AdminLayout({
     .eq("auth_user_id", user.id)
     .single();
 
-  // Only admins allowed
-  if (!profile || profile.role !== "admin") {
+  // Only superadmins allowed
+  if (!profile || profile.role !== "superadmin") {
     redirect("/dashboard");
   }
 

@@ -60,12 +60,14 @@ export async function analyzeCvAction(
     cv_id: cvId,
     user_id: profile.id,
     status: CV_STATUS.ANALYZING,
-    message: "Starting AI analysis with OpenAI",
+    message: "Starting AI analysis",
   });
 
   try {
-    // 5. Call OpenAI
-    const aiResult = await analyzeCvWithAi(cvRecord.parsed_text);
+    // 5. Call AI
+    const { result: aiResult, provider } = await analyzeCvWithAi(
+      cvRecord.parsed_text
+    );
 
     // 6. Save analysis_results
     const { data: analysisRecord, error: analysisError } = await supabase
@@ -117,7 +119,8 @@ export async function analyzeCvAction(
       cv_id: cvId,
       user_id: profile.id,
       status: CV_STATUS.COMPLETED,
-      message: `AI analysis completed. Score: ${aiResult.overallScore}/100`,
+      provider,
+      message: `AI analysis completed via ${provider}. Score: ${aiResult.overallScore}/100`,
     });
 
     revalidatePath("/dashboard");
@@ -174,11 +177,11 @@ export async function runAnalysisAfterUpload(
     cv_id: cvId,
     user_id: userId,
     status: CV_STATUS.ANALYZING,
-    message: "Starting AI analysis with OpenAI",
+    message: "Starting AI analysis",
   });
 
   try {
-    const aiResult = await analyzeCvWithAi(parsedText);
+    const { result: aiResult, provider } = await analyzeCvWithAi(parsedText);
 
     const { data: analysisRecord, error: analysisError } = await supabase
       .from("analysis_results")
@@ -220,7 +223,8 @@ export async function runAnalysisAfterUpload(
       cv_id: cvId,
       user_id: userId,
       status: CV_STATUS.COMPLETED,
-      message: `AI analysis completed. Score: ${aiResult.overallScore}/100`,
+      provider,
+      message: `AI analysis completed via ${provider}. Score: ${aiResult.overallScore}/100`,
     });
 
     revalidatePath("/dashboard");

@@ -68,7 +68,7 @@ export async function uploadCvAction(
 
 async function processUpload(
   supabase: Awaited<ReturnType<typeof createClient>>,
-  user: { id: string; email?: string; user_metadata?: Record<string, any> },
+  user: { id: string; email?: string; user_metadata?: Record<string, unknown> },
   formData: FormData
 ): Promise<UploadActionState> {
   // 2. Get or create profile

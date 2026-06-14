@@ -1,6 +1,8 @@
 import { createClient } from "@/lib/supabase/server";
 import type { SupabaseClient } from "@supabase/supabase-js";
+import type { Profile } from "@/types";
 
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
 type AnySupabaseClient = SupabaseClient<any, any, any>;
 
 /**
@@ -28,7 +30,7 @@ export async function getAuthUser(client?: AnySupabaseClient) {
  * Returns { profile, error } so callers can show meaningful messages.
  */
 export async function getOrCreateProfile(client?: AnySupabaseClient): Promise<{
-  profile: Record<string, any> | null;
+  profile: Profile | null;
   error?: string;
 }> {
   const supabase = client ?? (await createClient());
@@ -38,6 +40,7 @@ export async function getOrCreateProfile(client?: AnySupabaseClient): Promise<{
     return { profile: null, error: "Not authenticated (no session found)." };
   }
 
+  // eslint-disable-next-line prefer-const
   let { data: profile, error: selectError } = await supabase
     .from("profiles")
     .select("*")

@@ -12,6 +12,8 @@ import {
   LogOut,
   Menu,
   X,
+  Key,
+  Shield,
 } from "lucide-react";
 import { useState } from "react";
 import { logoutAction } from "@/lib/actions/auth";
@@ -29,8 +31,9 @@ const userNavItems = [
 ];
 
 const adminNavItems = [
-  { href: "/admin", label: "Admin", icon: LayoutDashboard },
-  { href: "/admin/users", label: "Users", icon: FileSearch },
+  { href: "/admin", label: "Dashboard", icon: LayoutDashboard },
+  { href: "/admin/api-keys", label: "API Keys", icon: Key },
+  { href: "/admin/users", label: "Users", icon: Shield },
   { href: "/admin/logs", label: "Logs", icon: History },
   { href: "/admin/monitoring", label: "Monitoring", icon: FileSearch },
 ];
@@ -38,7 +41,7 @@ const adminNavItems = [
 export default function Navbar({ userName, userRole }: NavbarProps) {
   const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
-  const isAdmin = userRole === "admin";
+  const isAdmin = userRole === "superadmin";
   const navItems = isAdmin ? adminNavItems : userNavItems;
 
   return (
@@ -144,7 +147,7 @@ export default function Navbar({ userName, userRole }: NavbarProps) {
                   {userName}
                   {isAdmin && (
                     <span className="ml-2 rounded bg-purple-200 px-1.5 py-0.5 text-xs font-black text-purple-800">
-                      ADMIN
+                      SUPERADMIN
                     </span>
                   )}
                 </div>

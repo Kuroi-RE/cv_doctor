@@ -28,13 +28,29 @@ export async function loginAction(
   const { email, password }: LoginInput = parsed.data;
   const supabase = await createClient();
 
-  const { error } = await supabase.auth.signInWithPassword({
+  const { data: signInData, error } = await supabase.auth.signInWithPassword({
     email,
     password,
   });
 
-  if (error) {
-    return { error: error.message };
+  if (error || !signInData.user) {
+    return { error: error?.message || "Login failed." };
+  }
+
+  // Check if user is banned — use the user object returned from signInWithPassword
+  // instead of getUser() which relies on cookies that may not be synced yet.
+  const { data: profile } = await supabase
+    .from("profiles")
+    .select("is_banned, banned_reason")
+    .eq("auth_user_id", signInData.user.id)
+    .single();
+
+  if (profile?.is_banned) {
+    // Sign out and reject — this clears the auth cookies before returning.
+    await supabase.auth.signOut();
+    return {
+      error: `Your account has been banned. ${profile.banned_reason || ""}`.trim(),
+    };
   }
 
   revalidatePath("/", "layout");

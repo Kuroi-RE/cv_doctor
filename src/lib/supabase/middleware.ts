@@ -40,6 +40,26 @@ export async function updateSession(request: NextRequest) {
   const isUserRoute = userRoutePrefixes.some((prefix) =>
     pathname.startsWith(prefix)
   );
+  const isAdminRoute = pathname.startsWith("/admin");
+  const isProtectedRoute = isUserRoute || isAdminRoute;
+
+  // Check ban status for authenticated users on protected routes.
+  // Only enforce ban on user/admin routes so banned users on /login
+  // do not get stuck in an infinite redirect loop.
+  if (user && isProtectedRoute) {
+    const { data: profile } = await supabase
+      .from("profiles")
+      .select("is_banned")
+      .eq("auth_user_id", user.id)
+      .single();
+
+    if (profile?.is_banned) {
+      const loginUrl = request.nextUrl.clone();
+      loginUrl.pathname = "/login";
+      loginUrl.searchParams.set("banned", "1");
+      return NextResponse.redirect(loginUrl);
+    }
+  }
 
   if (isUserRoute && !user) {
     const loginUrl = request.nextUrl.clone();
@@ -49,7 +69,7 @@ export async function updateSession(request: NextRequest) {
   }
 
   // Protected admin routes — redirect to login if not authenticated
-  if (pathname.startsWith("/admin")) {
+  if (isAdminRoute) {
     if (!user) {
       const loginUrl = request.nextUrl.clone();
       loginUrl.pathname = "/login";
@@ -64,7 +84,7 @@ export async function updateSession(request: NextRequest) {
       .eq("auth_user_id", user.id)
       .single();
 
-    if (!profile || profile.role !== "admin") {
+    if (!profile || profile.role !== "superadmin") {
       // Non-admin users get redirected to their dashboard
       const dashboardUrl = request.nextUrl.clone();
       dashboardUrl.pathname = "/dashboard";

@@ -1,4 +1,4 @@
-export type UserRole = "user" | "admin";
+export type UserRole = "user" | "superadmin";
 
 export type CvStatus = "uploaded" | "parsing" | "analyzing" | "completed" | "failed";
 
