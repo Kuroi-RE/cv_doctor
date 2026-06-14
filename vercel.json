@@ -1,0 +1,4 @@
+{
+  "buildCommand": "rm -rf .next node_modules/pdf-parse node_modules/pdfjs-dist && npm run build",
+  "framework": "nextjs"
+}

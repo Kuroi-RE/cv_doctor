@@ -1,122 +1,66 @@
 import mammoth from "mammoth";
 import path from "path";
+import PDFParser from "pdf2json";
 
 /**
- * Polyfill browser globals that pdfjs-dist expects in Node.js.
- * DOMMatrix, Path2D, and other Canvas API types are referenced by
- * the display layer even when we only call getText().
+ * Extract plain text from a PDF buffer using pdf2json.
+ * Pure JavaScript — no canvas, no workers, no DOMMatrix.
  */
-function polyfillBrowserGlobals() {
-  if (typeof globalThis.DOMMatrix === "undefined") {
-    // eslint-disable-next-line @typescript-eslint/no-extraneous-class
-    globalThis.DOMMatrix = class DOMMatrix {
-      a = 1;
-      b = 0;
-      c = 0;
-      d = 1;
-      e = 0;
-      f = 0;
-      m11 = 1;
-      m12 = 0;
-      m13 = 0;
-      m14 = 0;
-      m21 = 0;
-      m22 = 1;
-      m23 = 0;
-      m24 = 0;
-      m31 = 0;
-      m32 = 0;
-      m33 = 1;
-      m34 = 0;
-      m41 = 0;
-      m42 = 0;
-      m43 = 0;
-      m44 = 1;
-      is2D = true;
-      isIdentity = true;
+function parsePdf(buffer: Buffer): Promise<string> {
+  return new Promise((resolve, reject) => {
+    const pdfParser = new PDFParser();
 
-      constructor(init?: string | number[]) {
-        if (Array.isArray(init)) {
-          this.a = init[0] ?? 1;
-          this.b = init[1] ?? 0;
-          this.c = init[2] ?? 0;
-          this.d = init[3] ?? 1;
-          this.e = init[4] ?? 0;
-          this.f = init[5] ?? 0;
+    pdfParser.on("pdfParser_dataError", (errData) => {
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      const raw = errData as any;
+      reject(new Error(raw?.parserError || "PDF parsing failed"));
+    });
+
+    pdfParser.on("pdfParser_dataReady", (pdfData) => {
+      try {
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        const pages: any[] = (pdfData.Pages as unknown as any[]) || [];
+        const lines: string[] = [];
+
+        for (const page of pages) {
+          const texts = (page.Texts as Array<Record<string, unknown>>) || [];
+          const pageLines: Record<number, string[]> = {};
+
+          for (const text of texts) {
+            const runs = (text.R as Array<Record<string, string>>) || [];
+            const y = (text.y as number) ?? 0;
+            const row = Math.round(y * 10) / 10; // Group by rounded Y-coordinate
+            if (!pageLines[row]) pageLines[row] = [];
+
+            for (const run of runs) {
+              const raw = run.T || "";
+              // pdf2json URL-encodes text items
+              const decoded = raw.includes("%")
+                ? decodeURIComponent(raw)
+                : raw;
+              pageLines[row].push(decoded);
+            }
+          }
+
+          // Sort lines by Y coordinate (top-to-bottom) and join
+          const sortedRows = Object.keys(pageLines)
+            .map(Number)
+            .sort((a, b) => a - b);
+
+          for (const row of sortedRows) {
+            const lineText = pageLines[row].join("").trim();
+            if (lineText) lines.push(lineText);
+          }
         }
+
+        resolve(lines.join("\n"));
+      } catch (e) {
+        reject(e);
       }
+    });
 
-      multiply(): DOMMatrix {
-        return this;
-      }
-
-      translate(): DOMMatrix {
-        return this;
-      }
-
-      scale(): DOMMatrix {
-        return this;
-      }
-
-      rotate(): DOMMatrix {
-        return this;
-      }
-
-      flipX(): DOMMatrix {
-        return this;
-      }
-
-      flipY(): DOMMatrix {
-        return this;
-      }
-
-      inverse(): DOMMatrix {
-        return this;
-      }
-
-      transformPoint(): { x: number; y: number } {
-        return { x: 0, y: 0 };
-      }
-
-      toString(): string {
-        return "matrix(1, 0, 0, 1, 0, 0)";
-      }
-    } as unknown as typeof DOMMatrix;
-  }
-
-  if (typeof globalThis.Path2D === "undefined") {
-    // eslint-disable-next-line @typescript-eslint/no-extraneous-class
-    globalThis.Path2D = class Path2D {
-      addPath(): void {}
-      closePath(): void {}
-      moveTo(): void {}
-      lineTo(): void {}
-      bezierCurveTo(): void {}
-      quadraticCurveTo(): void {}
-      arc(): void {}
-      arcTo(): void {}
-      ellipse(): void {}
-      rect(): void {}
-      roundRect(): void {}
-    } as unknown as typeof Path2D;
-  }
-}
-
-polyfillBrowserGlobals();
-
-/**
- * Extract plain text from a PDF buffer using pdf-parse v2 (dynamically imported).
- */
-async function parsePdf(buffer: Buffer): Promise<string> {
-  // pdf-parse already lazy-loaded its worker on first use.
-  const { PDFParse } = await import("pdf-parse");
-  const parser = new PDFParse({ data: new Uint8Array(buffer) });
-  try {
-    const result = await parser.getText();
-    return result.text;
-  } finally {
-    await parser.destroy();
-  }
+    pdfParser.parseBuffer(buffer);
+  });
 }
 
 /**
