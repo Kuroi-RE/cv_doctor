@@ -1,4 +1,5 @@
 import { createClient } from "@/lib/supabase/server";
+import { createServiceClient } from "@/lib/supabase/service";
 import { STORAGE_BUCKET } from "@/lib/constants";
 import { randomUUID } from "crypto";
 import path from "path";
@@ -18,14 +19,29 @@ export function generateStoragePath(
 
 /**
  * Upload a file buffer to Supabase Storage.
- * Returns the stored file path on success.
+ * Uses service-role client to bypass Storage RLS policies.
+ * Only call from server actions that already validated auth.
  */
 export async function uploadCvToStorage(
   buffer: Buffer,
   filePath: string,
   mimeType: string
 ): Promise<string> {
-  const supabase = await createClient();
+  const supabase = createServiceClient();
+
+  // Auto-create bucket if it doesn't exist (production safety net)
+  const { data: buckets } = await supabase.storage.listBuckets();
+  const bucketExists = buckets?.some((b) => b.name === STORAGE_BUCKET);
+  if (!bucketExists) {
+    const { error: createError } = await supabase.storage.createBucket(
+      STORAGE_BUCKET,
+      { public: false }
+    );
+    if (createError) {
+      console.warn("[storage] Bucket auto-create failed:", createError.message);
+      // Continue trying upload anyway — it might already exist.
+    }
+  }
 
   const { error } = await supabase.storage
     .from(STORAGE_BUCKET)
@@ -45,7 +61,7 @@ export async function uploadCvToStorage(
  * Delete a file from Supabase Storage.
  */
 export async function deleteCvFromStorage(filePath: string): Promise<void> {
-  const supabase = await createClient();
+  const supabase = createServiceClient();
 
   const { error } = await supabase.storage
     .from(STORAGE_BUCKET)

@@ -10,6 +10,9 @@ const nextConfig: NextConfig = {
   ],
   experimental: {
     workerThreads: false,
+    serverActions: {
+      bodySizeLimit: "10mb",
+    },
   },
 };
 

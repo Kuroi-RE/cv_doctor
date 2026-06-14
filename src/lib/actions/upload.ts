@@ -121,7 +121,7 @@ async function processUpload(
   // 5. Generate storage path and upload to storage
   const storedPath = generateStoragePath(profile.id, file.name);
 
-  let cvId: string;
+  let cvId: string | undefined;
 
   try {
     await uploadCvToStorage(buffer, storedPath, file.type);
@@ -193,6 +193,9 @@ async function processUpload(
       .eq("id", cvId);
 
     // 10. Run AI analysis (updates CV status to analyzing → completed/failed)
+    if (!cvId) {
+      throw new Error("CV ID is missing after record creation.");
+    }
     await runAnalysisAfterUpload(cvId, profile.id, parsedText);
 
     revalidatePath("/dashboard");
@@ -204,7 +207,11 @@ async function processUpload(
       status: CV_STATUS.COMPLETED,
     };
   } catch (err) {
-    if (cvId!) {
+    const errorMsg = err instanceof Error ? err.message : "Unknown error";
+    console.error("[upload] Full error:", errorMsg);
+
+    // If cvId was created before the error, mark it failed so the user sees it in history.
+    if (cvId) {
       await supabase
         .from("cvs")
         .update({ status: CV_STATUS.FAILED })
@@ -215,18 +222,15 @@ async function processUpload(
         user_id: profile.id,
         status: CV_STATUS.FAILED,
         message: "Upload or parsing failed",
-        error_message:
-          err instanceof Error ? err.message : "Unknown error",
+        error_message: errorMsg,
       });
     }
 
+    // Always clean up the orphaned storage file
     await deleteCvFromStorage(storedPath);
 
     return {
-      error:
-        err instanceof Error
-          ? err.message
-          : "An unexpected error occurred during upload.",
+      error: errorMsg || "An unexpected error occurred during upload.",
     };
   }
 }
